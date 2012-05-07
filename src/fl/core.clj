@@ -25,7 +25,7 @@
    'insert `(fn [f#] (preserve #(reduce (fn [xs# y#] (f# [xs# y#])) %)))
    'apply-to-all `(fn [f#] (preserve (partial map f#)))})
 
-(defn compile1 [expr]
+(defn compile [expr]
   (cond
    
    (symbol? expr)
@@ -38,9 +38,6 @@
    
    ;; TODO nth primitives, e.g. 2:x
    :else expr))
-
-(defn compile [exprs]
-  (map compile1 exprs))
 
 (comment
   (use 'clojure.pprint)
