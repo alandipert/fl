@@ -4,11 +4,25 @@
 (defn bottom? [x]
   (boolean (or (nil? x) (when (coll? x) (some nil? x)))))
 
-(defn preserve [f]
-  #(when-not (bottom? %) (f %)))
+;; (defn preserve [f]
+;;   #(when-not (bottom? %) (try (f %)
+;;                               (catch Throwable t
+;;                                 (throw (RuntimeException.
+;;                                         (format "Function %s was not able to receive argument %s" f %)))))))
+
+(defmacro preserve [f]
+  `(let [fsrc# '~f
+         f# ~f]
+     (fn [arg#]
+       (when-not (bottom? arg#)
+         (try (f# arg#)
+              (catch Throwable t#
+                (throw (Exception.
+                        (format ": %s failed with argument '%s'" fsrc# arg#)))))))))
 
 (defn fform [f]
-  #(reduce f (map preserve %&)))
+  (fn [& args]
+    (reduce f args)))
 
 (def functionals
   {'compose `(fform comp)
@@ -49,31 +63,12 @@
 (defn compile [exprs] (map compile1 exprs))
 
 (comment
+  (use 'clojure.pprint)
+  (def ip (compile '((compose + (insert +) (apply-to-all *) trans) [[1 2 3] [6 5 4]])))
+  (pprint ip)
+  (eval ip) ;=> Exception : (clojure.core/partial clojure.core/apply +) failed with argument 28
+
   (def ip (compile '((compose (insert +) (apply-to-all *) trans) [[1 2 3] [6 5 4]])))
-  (pprint ip) ;=>
-  ;; (((fl.core/fform clojure.core/comp)
-  ;;   ((clojure.core/fn
-  ;;     [f__2804__auto__]
-  ;;     (fl.core/preserve
-  ;;      (fn*
-  ;;       [p1__2803__2805__auto__]
-  ;;       (clojure.core/reduce
-  ;;        (clojure.core/fn
-  ;;         [xs__2806__auto__ y__2807__auto__]
-  ;;         (f__2804__auto__ [xs__2806__auto__ y__2807__auto__]))
-  ;;        p1__2803__2805__auto__))))
-  ;;    (fl.core/preserve (clojure.core/partial clojure.core/apply +)))
-  ;;   ((clojure.core/fn
-  ;;     [f__2808__auto__]
-  ;;     (fl.core/preserve
-  ;;      (clojure.core/partial clojure.core/map f__2808__auto__)))
-  ;;    (fl.core/preserve (clojure.core/partial clojure.core/apply *)))
-  ;;   (fl.core/preserve
-  ;;    (clojure.core/partial
-  ;;     clojure.core/apply
-  ;;     clojure.core/map
-  ;;     clojure.core/vector)))
-  ;;  [[1 2 3] [6 5 4]])
-  (eval ip) 
-  ;; => 28
+  (pprint ip)
+  (eval ip) ;=> 28
   )
