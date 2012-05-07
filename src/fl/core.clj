@@ -1,6 +1,5 @@
 (ns fl.core
-  (:refer-clojure :exclude (compile))
-  (:use [clojure.core.match :only (match)]))
+  (:refer-clojure :exclude (compile)))
 
 (defn bottom? [x]
   (boolean (or (nil? x) (when (coll? x) (some nil? x)))))
