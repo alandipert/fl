@@ -1,11 +1,11 @@
 (ns fl.core
   (:refer-clojure :exclude (compile)))
 
-(defn bottom? [x]
-  (boolean (or (nil? x) (when (coll? x) (some nil? x)))))
-
 (defn preserve [f]
-  #(when-not (bottom? %) (f %)))
+  (letfn [(bottom? [x] (boolean (or (nil? x)
+                                    (when (coll? x)
+                                      (some nil? x)))))]
+    #(when-not (bottom? %) (f %))))
 
 (def primitives
   {:forms {'constant {:emit `(preserve constantly)
@@ -44,15 +44,15 @@
 
 (defn compile [expr]
   (cond
-   
+
    (symbol? expr)
    (or (primitives expr)
        (find-var `expr)
        (throw (RuntimeException. (str "Symbol '" (name expr) "' is undefined."))))
-   
+
    (list? expr)
    (map compile expr)
-   
+
    ;; TODO nth primitives, e.g. 2:x
    :else expr))
 
@@ -72,7 +72,7 @@
   (def ip (compile '((compose + (insert +) (apply-to-all *) trans) [[1 2 3] [6 5 4]])))
   (pprint ip)
   (eval ip) ;=> Exception : (clojure.core/partial clojure.core/apply +) failed with argument 28
-  
+
   (def ip (compile '((compose (insert +) (apply-to-all *) trans) [[1 2 3] [6 5 4]])))
   (pprint ip)
   (time (dotimes [_ 1000]
