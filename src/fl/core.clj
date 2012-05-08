@@ -10,50 +10,47 @@
     #(when-not (bottom? %) (f %))))
 
 (def primitives
-  {'constant {:type :form
+  {'def {:type :form
+         :name 'def
+         :nary true}
+   'constant {:type :form
               :name 'constant
               :emit `(preserve constantly)
-              :alias 'clojure.core/unquote
-              :args [#{:function :object}]}
+              :alias 'clojure.core/unquote}
 
    'compose {:type :form
              :name 'compose
              :nary true
              :emit `(fn [& args#]
                       (reduce comp (map preserve args#)))
-             :alias '.
-             :args [:function+]}
+             :alias '.}
 
    'construct {:type :form
                :name 'construct
                :nary true,
                :emit `(fn [& args#]
                         (reduce juxt (map preserve args#)))
-               :alias '$
-               :args [:function+]}
+               :alias '$}
 
    'insert {:type :form
             :name 'insert
             :emit `(preserve (fn [f#]
                                #(reduce (fn [xs# y#]
                                           (f# [xs# y#])) %)))
-            :alias '/
-            :args [:function]}
+            :alias '/}
 
    'apply-to-all {:type :form
                   :name 'apply-to-all
                   :emit `(fn [f#]
                            (preserve (partial map f#)))
-                  :alias 'a
-                  :args [#{:function :form}]}
+                  :alias 'a}
 
    'condition {:type :form
                :name 'condition
                :nary #{3}
                :emit `(fn [p# f# g#]
                         (fn [x#] (preserve (if (p# x#) (f# x#) (g# x#)))))
-               :alias '->
-               :args [:function :function :function]}
+               :alias '->}
 
    'while {:type :form
            :name 'while
@@ -62,33 +59,29 @@
                     (fn [x#]
                       (do (while (p# x#)
                             (f# x#))
-                          (preserve x#))))
-           :args [:function :function]}
+                          (preserve x#))))}
 
    '+ {:type :function
        :name '+
-       :emit `(preserve (partial apply +))
-       :args [:object]}
+       :emit `(preserve (partial apply +))}
    '- {:type :function
        :name '-
-       :emit `(preserve (partial apply -))
-       :args [:object]}
+       :emit `(preserve (partial apply -))}
    '* {:type :function
        :name '*
-       :emit `(preserve (partial apply *))
-       :args [:object]}
+       :emit `(preserve (partial apply *))}
    '% {:type :function
        :name '%
-       :emit `(preserve (partial apply /))
-       :args [:object]}
+       :emit `(preserve (partial apply /))}
    'id {:type :function
         :name 'id
-        :emit `(preserve identity)
-        :args [:object]}
+        :emit `(preserve identity)}
    'trans {:type :function
            :name 'trans
-           :emit `(preserve (partial apply map vector))
-           :args [:object]}})
+           :emit `(preserve (partial apply map vector))}
+   '_ {:type :object
+       :name '_
+       :value nil}})
 
 (def named-aliases
   (->> primitives
@@ -99,7 +92,7 @@
 
 (def named-primitives
   (reduce (fn [xs [name spec]]
-            (assoc xs name spec))
+            (assoc xs name (assoc spec :args [])))
           {}
           primitives))
 
@@ -110,10 +103,15 @@
 (defmulti parse (fn [_ expr] (class expr)))
 
 (defmethod parse clojure.lang.PersistentList
-  [env [op & rest :as expr]]
-  (assoc (named-ops op),
-    :env env,
-    :args (map (partial parse (conj env expr)) rest)))
+  [env [op & more :as expr]]
+  (if (= op 'def)
+    (assoc (named-ops 'def)
+      :env env,
+      :args [{:type :object, :value (first more)},
+             (parse (conj env expr) (first (rest more)))])
+    (assoc (named-ops op),
+      :env env,
+      :args (map (partial parse (conj env expr)) more))))
 
 (defmethod parse clojure.lang.Symbol
   [env sym]
@@ -169,32 +167,34 @@
 
 (defmethod emit :form
   [form]
-  (list* (:emit form) (map emit (:args form))))
+  (if (= (:name form) 'def)
+    (list 'def
+          (:value (first (:args form)))
+          (emit (second (:args form))))
+    (if (empty? (:args form))
+      (:emit form)
+      (list* (:emit form) (map emit (:args form))))))
 
 (defmethod emit :function
   [function]
-  (list* (:emit function) (map emit (:args function))))
+  (if (empty? (:args function))
+    (:emit function)
+    (list* (:emit function) (map emit (:args function)))))
 
 (defmethod emit :object
   [object]
   (:value object))
 
-(comment
-  (use 'clojure.pprint)
-  (def ip (compile '((compose + (insert +) (apply-to-all *) trans) [[1 2 3] [6 5 4]])))
-  (pprint ip)
-  (eval ip) ;=> Exception : (clojure.core/partial clojure.core/apply +) failed with argument 28
+(defn emitn [exprs]
+  (doseq [expr exprs]
+    (eval (emit (analyze (parse [] expr))))))
 
-  (def ip (compile '((compose (insert +) (apply-to-all *) trans) [[1 2 3] [6 5 4]])))
-  (pprint ip)
-  (time (dotimes [_ 1000]
-          (eval ip)))                        ;=> 28
-  (eval (compile '(trans {})))
+(defmacro fp [& body]
+  `(do ~@(eval `(emitn '~body))))
 
-  (def inner-product (. (/ +) (a *) trans))
-  (def sum-and-prod ($ (/ +) (/ *)))
-  (def length (. (/ +) (a ~1)))
-  (def intsto (. range ($ ~1 inc)))
-  (def fact (. (/ *) intsto))
-  (def hello (str' ~"Hello " id))
-  )
+(fp
+ (def x ~1)
+ (def inner-product (. (/ +) (a *) trans))
+ (def sum-and-prod ($ (/ +) (/ *)))
+ (def length (. (/ +) (a ~1)))
+ )
