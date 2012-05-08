@@ -1,4 +1,6 @@
 (ns fl.core
+  (:use [clojure.string :only (join)]
+        [clojure.walk :only (postwalk-replace)])
   (:refer-clojure :exclude (compile)))
 
 (defn preserve [f]
@@ -103,19 +105,79 @@
 
 (def named-ops (merge named-primitives named-aliases))
 
+;;; parse
+
 (defmulti parse (fn [_ expr] (class expr)))
 
 (defmethod parse clojure.lang.PersistentList
   [env [op & rest :as expr]]
-  [(assoc (named-ops op) :env env) (mapcat (partial parse (conj env expr)) rest)])
+  (assoc (named-ops op),
+    :env env,
+    :args (map (partial parse (conj env expr)) rest)))
 
 (defmethod parse clojure.lang.Symbol
   [env sym]
-  [(assoc (named-ops sym) :env env)])
+  (assoc (named-ops sym) :env env))
+
+(defmethod parse clojure.lang.PersistentVector
+  [env v]
+  {:env env, :type :object, :value v})
+
+(defmethod parse clojure.lang.PersistentArrayMap
+  [env _]
+  (throw (Exception.
+          (str "- Maps are not supported.  At: "
+               (if (empty? env)
+                 "Top level."
+                 (join " → "
+                       (postwalk-replace
+                        {'clojure.core/unquote (symbol "~")} (conj env {}))))))))
 
 (defmethod parse :default
   [env expr]
-  [{:env env, :type :object, :value expr}])
+  {:env env, :type :object, :value expr})
+
+;;; analyze
+
+(defmulti analyze :type)
+
+(defmethod analyze :form
+  [form]
+  (let [arg-count (count (:args form))]
+    (if (and (> arg-count 1) (not (:nary form)))
+      (throw (Exception. (format "- Form %s was expecting 1 argument but was passed %s: %s"
+                                 (:name form)
+                                 arg-count
+                                 (apply str (join ", " (map (comp name :type) (:args form)))))))
+      (do
+        (map analyze (:args form))
+        form))))
+
+(defmethod analyze :function
+  [function]
+  (do
+    (map analyze (:args function))
+    function))
+
+(defmethod analyze :object
+  [object]
+  object)
+
+;;; emit
+
+(defmulti emit :type)
+
+(defmethod emit :form
+  [form]
+  (list* (:emit form) (map emit (:args form))))
+
+(defmethod emit :function
+  [function]
+  (list* (:emit function) (map emit (:args function))))
+
+(defmethod emit :object
+  [object]
+  (:value object))
 
 (comment
   (use 'clojure.pprint)
