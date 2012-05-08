@@ -10,49 +10,41 @@
 
 (def primitives
   {'def {:type :form
-         :name 'def
          :nary true}
    'constant {:type :form
-              :name 'constant
               :emit `(preserve constantly)
               :alias 'clojure.core/unquote}
 
    'compose {:type :form
-             :name 'compose
              :nary true
              :emit `(fn [& args#]
                       (reduce comp (map preserve args#)))
              :alias '.}
 
    'construct {:type :form
-               :name 'construct
                :nary true,
                :emit `(fn [& args#]
                         (reduce juxt (map preserve args#)))
                :alias '$}
 
    'insert {:type :form
-            :name 'insert
             :emit `(preserve (fn [f#]
                                #(reduce (fn [xs# y#]
                                           (f# [xs# y#])) %)))
             :alias '/}
 
    'apply-to-all {:type :form
-                  :name 'apply-to-all
                   :emit `(fn [f#]
                            (preserve (partial map f#)))
                   :alias 'a}
 
    'condition {:type :form
-               :name 'condition
                :nary #{3}
                :emit `(fn [p# f# g#]
                         (fn [x#] (preserve (if (p# x#) (f# x#) (g# x#)))))
                :alias '->}
 
    'while {:type :form
-           :name 'while
            :nary #{2}
            :emit `(fn [p# f#]
                     (fn [x#]
@@ -61,25 +53,18 @@
                           (preserve x#))))}
 
    '+ {:type :function
-       :name '+
        :emit `(preserve (partial apply +))}
    '- {:type :function
-       :name '-
        :emit `(preserve (partial apply -))}
    '* {:type :function
-       :name '*
        :emit `(preserve (partial apply *))}
    '% {:type :function
-       :name '%
        :emit `(preserve (partial apply /))}
    'id {:type :function
-        :name 'id
         :emit `(preserve identity)}
    'trans {:type :function
-           :name 'trans
            :emit `(preserve (partial apply map vector))}
    '_ {:type :object
-       :name '_
        :value nil}})
 
 (def named-aliases
@@ -91,7 +76,7 @@
 
 (def named-primitives
   (reduce (fn [xs [name spec]]
-            (assoc xs name (assoc spec :args [])))
+            (assoc xs name (assoc spec :args [], :name name)))
           {}
           primitives))
 
@@ -167,9 +152,13 @@
 (defmethod emit :form
   [form]
   (if (= (:name form) 'def)
-    (list 'def
-          (:value (first (:args form)))
-          (emit (second (:args form))))
+    `(do
+       ~(list 'def
+              (:value (first (:args form)))
+              (emit (second (:args form))))
+       (alter-meta! (var ~(:value (first (:args form))))
+                    merge
+                    {:fl '~form}))
     (if (empty? (:args form))
       (:emit form)
       (list* (:emit form) (map emit (:args form))))))
@@ -188,12 +177,22 @@
   (doseq [expr exprs]
     (eval (emit (analyze (parse [] expr))))))
 
-(defmacro fp [& body]
+(defmacro fl [& body]
   `(do ~@(eval `(emitn '~body))))
 
-(fp
- (def x ~1)
- (def inner-product (. (/ +) (a *) trans))
- (def sum-and-prod ($ (/ +) (/ *)))
- (def length (. (/ +) (a ~1)))
- )
+(defn fl-source [name]
+  "Look up the fl source for a var: (fl-source #'length)"
+  (postwalk-replace
+   {'clojure.core/unquote (symbol "~")}
+   (first (:env (first (get-in (meta name) [:fl :args 1 :args]))))))
+
+(comment
+  (fl
+   (def x ~1)
+   (def inner-product (. (/ +) (a *) trans))
+   (def sum-and-prod ($ (/ +) (/ *)))
+   (def length (. (/ +) (a ~1)))
+   )
+
+  (fl-source #'length)
+  )
