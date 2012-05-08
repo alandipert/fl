@@ -101,15 +101,18 @@
       :args [{:type :object, :value (first more)},
              (parse (conj env expr) (first (rest more)))])
 
-   ;; invocation
-   (and (symbol? op) (empty? more))
-   {:type :object, :value (list op), :env env}
-
    ;; named form or function
    (named-ops op)
    (assoc (named-ops op),
      :env env,
      :args (map (partial parse (conj env expr)) more))
+
+   ;; invocation
+   (symbol? op)
+   {:type :inline,
+    :expr {:type :object, :value op, :env env}
+    :env env
+    :args (map (partial parse (conj env expr)) more)}
 
    ;; inline invocation
    (list? op)
@@ -200,7 +203,9 @@
 
 (defmethod emit :inline
   [inline]
-  (list* (map emit (:expr inline)) (map emit (:args inline))))
+  (if (= :object (:type (:expr inline)))
+    (list* (:value (:expr inline)) (map emit (:args inline)))
+    (list* (map emit (:expr inline)) (map emit (:args inline)))))
 
 (defmethod emit :object
   [object]
