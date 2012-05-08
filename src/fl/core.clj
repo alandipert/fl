@@ -6,12 +6,14 @@
   (letfn [(bottom? [x] (boolean (or (nil? x)
                                     (when (coll? x)
                                       (some nil? x)))))]
-    #(when-not (bottom? %) (f %))))
+    (fn
+      ([arg] (when-not (bottom? arg) (f arg)))
+      ([]))))
 
 (def primitives
   {'def {:type :form
          :nary true}
-   
+
    'clojure.core/unquote 'constant
    'constant {:type :form
               :emit `(preserve constantly)}
@@ -82,14 +84,18 @@
       (named-primitives spec)
       spec)))
 
-(defn flpp [flform]
-  (postwalk (fn [f]
-              (if (list? f)
-                (if (= (first f) 'clojure.core/unquote)
-                  (symbol (str "~" (flpp (second f))))
-                  f)
-                f))
-            flform))
+(defn clojure-def? [sym]
+  "True if this symbol represents a Clojure definition available in this namespace."
+  (and ((merge (ns-refers *ns*) (ns-publics *ns*)) sym)
+       (not (:fl (meta (ns-resolve *ns* sym))))))
+
+(defn clojure-function? [sym]
+  (if (clojure-def? sym)
+    (fn? @(ns-resolve *ns* sym))))
+
+(def
+  ^{:doc "True if this symbol represents an FL definition available in this namespace."}
+  fl-def? (complement clojure-def?))
 
 ;;; parse
 
@@ -106,7 +112,7 @@
       :args [{:type :object, :value (first more)},
              (parse (conj env expr) (first (rest more)))])
 
-   ;; named form or function
+   ;; primitive form or function
    (get-prim op)
    (assoc (get-prim op),
      :env env,
@@ -114,12 +120,26 @@
 
    ;; invocation
    (symbol? op)
-   {:type :inline,
-    :expr {:type :object, :value op, :env env}
-    :env env
-    :args (map (partial parse (conj env expr)) more)}
+   (cond
+    ;; defined FL function, form, or value
+    (fl-def? op)
+    {:type :inline,
+     :expr {:type :object,
+            :value op,
+            :env env}
+     :env env
+     :args (map (partial parse (conj env expr)) more)}
 
-   ;; inline invocation
+    ;; defined clojure value
+    (clojure-def? op)
+    {:type :clojure-call,
+     :expr {:type :clojure-function,
+            :value op,
+            :env env}
+     :env env
+     :args (map (partial parse (conj env expr)) more)})
+
+   ;; inline expression
    (list? op)
    {:type :inline,
     :expr (map (partial parse (conj env expr)) op)
@@ -128,21 +148,24 @@
 
 (defmethod parse clojure.lang.Symbol
   [env sym]
-  (if (get-prim sym)
-    (assoc (get-prim sym) :env env)
-    {:type :object, :value sym, :env env}))
+  (cond
+
+   ;; FL primitive value
+   (get-prim sym)
+   (assoc (get-prim sym) :env env)
+
+   ;; clojure function
+   (clojure-function? sym)
+   {:type :clojure-function,
+    :value sym,
+    :env env}
+
+   :else
+   {:type :object, :value sym, :env env}))
 
 (defmethod parse clojure.lang.PersistentVector
   [env v]
   {:env env, :type :object, :value v})
-
-(defmethod parse clojure.lang.PersistentArrayMap
-  [env _]
-  (throw (Exception.
-          (str "- Maps are not supported.  At: "
-               (if (empty? env)
-                 "Top level."
-                 (join " → " (flpp (conj env {}))))))))
 
 (defmethod parse :default
   [env expr]
@@ -153,9 +176,16 @@
 (defmulti analyze :type)
 
 (defmethod analyze :default
-  [object]
-  object)
+  [object] object)
 
+(defn flpp [flform]
+  (postwalk (fn [f]
+              (if (list? f)
+                (if (= (first f) 'clojure.core/unquote)
+                  (symbol (str "~" (flpp (second f))))
+                  f)
+                f))
+            flform))
 ;;; emit
 
 (defmulti emit :type)
@@ -169,7 +199,7 @@
               (emit (second (:args form))))
        (alter-meta! (var ~(:value (first (:args form))))
                     merge
-                    {:fl '~form})
+                    {:fl {:source '~(flpp (first (:env (second (:args form)))))}})
        #'~(:value (first (:args form))))
     (if (empty? (:args form))
       (:emit form)
@@ -180,6 +210,19 @@
   (if (empty? (:args function))
     (:emit function)
     (list* (:emit function) (map emit (:args function)))))
+
+(defmethod emit :clojure-function
+  [function]
+  `(preserve (fn
+               ([arg#]
+                  (if (coll? arg#)
+                    (apply ~(:value function) arg#)
+                    (~(:value function) arg#)))
+               ([]))))
+
+(defmethod emit :clojure-call
+  [call]
+  (list* (emit (:expr call)) (map emit (:args call))))
 
 (defmethod emit :inline
   [inline]
@@ -210,8 +253,11 @@
     (let [form (read)]
       (if (= form :q)
         :quit
-        (do (println (flpp (eval (emit (analyze (parse [] (eval `(identity '~form))))))))
-            (flush)
+        (do (try
+              (println (flpp (eval (emit (analyze (parse [] (eval `(identity '~form))))))))
+              (catch Exception e
+                (println e))
+              (finally (flush)))
             (recur))))))
 
 (comment
@@ -219,7 +265,9 @@
    (def x ~1)
    (def inner-product (. (/ +) (a *) trans))
    (def sum-and-prod ($ (/ +) (/ *)))
-   (def length (. (/ +) (a ~1)))
+   (def incr (. (/ +) ($ id ~1)))
+   (def intsto (. range ($ ~1 id) inc))
+   (def fact (. * intsto))
    )
 
   (fl-source #'length)
