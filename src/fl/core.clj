@@ -1,6 +1,6 @@
 (ns fl.core
   (:use [clojure.string :only (join)]
-        [clojure.walk :only (postwalk-replace)]))
+        [clojure.walk :only (postwalk)]))
 
 (defn preserve [f]
   (letfn [(bottom? [x] (boolean (or (nil? x)
@@ -11,38 +11,39 @@
 (def primitives
   {'def {:type :form
          :nary true}
+   
+   'clojure.core/unquote 'constant
    'constant {:type :form
-              :emit `(preserve constantly)
-              :alias 'clojure.core/unquote}
+              :emit `(preserve constantly)}
 
+   '. 'compose
    'compose {:type :form
              :nary true
              :emit `(fn [& args#]
-                      (reduce comp (map preserve args#)))
-             :alias '.}
+                      (reduce comp (map preserve args#)))}
 
+   '$ 'construct
    'construct {:type :form
                :nary true,
                :emit `(fn [& args#]
-                        (reduce juxt (map preserve args#)))
-               :alias '$}
+                        (reduce juxt (map preserve args#)))}
 
+   '/ 'insert
    'insert {:type :form
             :emit `(preserve (fn [f#]
                                #(reduce (fn [xs# y#]
-                                          (f# [xs# y#])) %)))
-            :alias '/}
+                                          (f# [xs# y#])) %)))}
 
+   'a 'apply-to-all
    'apply-to-all {:type :form
                   :emit `(fn [f#]
-                           (preserve (partial map f#)))
-                  :alias 'a}
+                           (preserve (partial map f#)))}
 
+   '-> 'condition
    'condition {:type :form
                :nary #{3}
                :emit `(fn [p# f# g#]
-                        (fn [x#] (preserve (if (p# x#) (f# x#) (g# x#)))))
-               :alias '->}
+                        (fn [x#] (preserve (if (p# x#) (f# x#) (g# x#)))))}
 
    'while {:type :form
            :nary #{2}
@@ -67,24 +68,28 @@
    '_ {:type :object
        :value nil}})
 
-(def named-aliases
-  (->> primitives
-       (map (fn [[name, spec]] [(:alias spec) name]))
-       (filter (comp identity first))
-       (map (fn [[alias, name]] [alias, (get primitives name)]))
-       (into {})))
-
 (def named-primitives
   (reduce (fn [xs [name spec]]
-            (assoc xs name (assoc spec :args [], :name name)))
+            (if (symbol? spec)
+              (assoc xs name spec)      ;is an alias -> name
+              (assoc xs name (assoc spec :args [], :name name))))
           {}
           primitives))
 
-(def named-ops (merge named-primitives named-aliases))
+(defn get-prim [sym]
+  (let [spec (named-primitives sym)]
+    (if (symbol? spec)
+      (named-primitives spec)
+      spec)))
 
 (defn flpp [flform]
-  (postwalk-replace
-   {'clojure.core/unquote (symbol "~")} flform))
+  (postwalk (fn [f]
+              (if (list? f)
+                (if (= (first f) 'clojure.core/unquote)
+                  (symbol (str "~" (flpp (second f))))
+                  f)
+                f))
+            flform))
 
 ;;; parse
 
@@ -96,14 +101,14 @@
 
    ;; definition
    (= op 'def)
-   (assoc (named-ops 'def)
+   (assoc (get-prim 'def)
       :env env,
       :args [{:type :object, :value (first more)},
              (parse (conj env expr) (first (rest more)))])
 
    ;; named form or function
-   (named-ops op)
-   (assoc (named-ops op),
+   (get-prim op)
+   (assoc (get-prim op),
      :env env,
      :args (map (partial parse (conj env expr)) more))
 
@@ -123,8 +128,8 @@
 
 (defmethod parse clojure.lang.Symbol
   [env sym]
-  (if (named-ops sym)
-    (assoc (named-ops sym) :env env)
+  (if (get-prim sym)
+    (assoc (get-prim sym) :env env)
     {:type :object, :value sym, :env env}))
 
 (defmethod parse clojure.lang.PersistentVector
@@ -147,31 +152,6 @@
 
 (defmulti analyze :type)
 
-(defmethod analyze :form
-  [form]
-  (let [arg-count (count (:args form))]
-    (if (and (> arg-count 1) (not (:nary form)))
-      (throw (Exception. (format "- Form %s was expecting 1 argument but was passed %s: %s"
-                                 (:name form)
-                                 arg-count
-                                 (apply str (join ", " (map (comp name :type) (:args form)))))))
-      (do
-        (map analyze (:args form))
-        form))))
-
-(defmethod analyze :function
-  [function]
-  (do
-    (map analyze (:args function))
-    function))
-
-(defmethod analyze :object
-  [object]
-  object)
-
-(defmethod analyze :inline
-  [inline] inline)
-
 (defmethod analyze :default
   [object]
   object)
@@ -190,7 +170,7 @@
        (alter-meta! (var ~(:value (first (:args form))))
                     merge
                     {:fl '~form})
-       nil)
+       #'~(:value (first (:args form))))
     (if (empty? (:args form))
       (:emit form)
       (list* (:emit form) (map emit (:args form))))))
@@ -220,9 +200,7 @@
 
 (defn fl-source [name]
   "Look up the fl source for a var: (fl-source #'length)"
-  (postwalk-replace
-   {'clojure.core/unquote (symbol "~")}
-   (first (:env (first (get-in (meta name) [:fl :args 1 :args]))))))
+  (flpp (first (:env (first (get-in (meta name) [:fl :args 1 :args]))))))
 
 (defn repl []
   (prn "Type " :q " to quit.")
