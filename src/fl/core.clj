@@ -8,64 +8,114 @@
     #(when-not (bottom? %) (f %))))
 
 (def primitives
-  {:forms {'constant {:emit `(preserve constantly)
-                      :aliases '#{clojure.core/unquote}}
-           'compose {:nary true,
-                     :emit `(fn [& args#]
-                              (reduce comp (map preserve args#)))
-                     :aliases '#{.}}
-           'construct {:nary true,
-                       :emit `(fn [& args#]
-                                (reduce juxt (map preserve args#)))
-                       :aliases '#{$}}
-           'insert {:emit `(preserve (fn [f#]
-                                       #(reduce (fn [xs# y#]
-                                                  (f# [xs# y#])) %)))
-                    :aliases '#{/}}
-           'apply-to-all {:emit `(fn [f#]
-                                   (preserve (partial map f#)))
-                          :aliases '#{a}}
-           'condition {:nary #{3}
-                       :emit `(fn [p# f# g#]
-                                (fn [x#] (preserve (if (p# x#) (f# x#) (g# x#)))))
-                       :aliases '#{->}}
-           'while {:nary #{2}
-                   :emit `(fn [p# f#]
-                            (fn [x#]
-                              (do (while (p# x#)
-                                    (f# x#))
-                                  (preserve x#))))}}
-   :functions {'+ {:emit `(preserve (partial apply +))}
-               '- {:emit `(preserve (partial apply -))}
-               '* {:emit `(preserve (partial apply *))}
-               '% {:emit `(preserve (partial apply %))}
-               'id {:emit `(preserve identity)}
-               'trans {:emit `(preserve (partial apply map vector))}}})
+  {'constant {:type :form
+              :name 'constant
+              :emit `(preserve constantly)
+              :alias 'clojure.core/unquote
+              :args [#{:function :object}]}
 
-(defn compile [expr]
-  (cond
+   'compose {:type :form
+             :name 'compose
+             :nary true
+             :emit `(fn [& args#]
+                      (reduce comp (map preserve args#)))
+             :alias '.
+             :args [:function+]}
 
-   (symbol? expr)
-   (or (primitives expr)
-       (find-var `expr)
-       (throw (RuntimeException. (str "Symbol '" (name expr) "' is undefined."))))
+   'construct {:type :form
+               :name 'construct
+               :nary true,
+               :emit `(fn [& args#]
+                        (reduce juxt (map preserve args#)))
+               :alias '$
+               :args [:function+]}
 
-   (list? expr)
-   (map compile expr)
+   'insert {:type :form
+            :name 'insert
+            :emit `(preserve (fn [f#]
+                               #(reduce (fn [xs# y#]
+                                          (f# [xs# y#])) %)))
+            :alias '/
+            :args [:function]}
 
-   ;; TODO nth primitives, e.g. 2:x
-   :else expr))
+   'apply-to-all {:type :form
+                  :name 'apply-to-all
+                  :emit `(fn [f#]
+                           (preserve (partial map f#)))
+                  :alias 'a
+                  :args [#{:function :form}]}
 
-(defmulti analyze (fn [_ expr] (class expr)))
+   'condition {:type :form
+               :name 'condition
+               :nary #{3}
+               :emit `(fn [p# f# g#]
+                        (fn [x#] (preserve (if (p# x#) (f# x#) (g# x#)))))
+               :alias '->
+               :args [:function :function :function]}
 
-(defmethod analyze clojure.lang.Symbol
-  [env sym] (println sym))
+   'while {:type :form
+           :name 'while
+           :nary #{2}
+           :emit `(fn [p# f#]
+                    (fn [x#]
+                      (do (while (p# x#)
+                            (f# x#))
+                          (preserve x#))))
+           :args [:function :function]}
 
-(defmethod analyze clojure.lang.PersistentList
-  [env [op & rest]] (println op))
+   '+ {:type :function
+       :name '+
+       :emit `(preserve (partial apply +))
+       :args [:object]}
+   '- {:type :function
+       :name '-
+       :emit `(preserve (partial apply -))
+       :args [:object]}
+   '* {:type :function
+       :name '*
+       :emit `(preserve (partial apply *))
+       :args [:object]}
+   '% {:type :function
+       :name '%
+       :emit `(preserve (partial apply /))
+       :args [:object]}
+   'id {:type :function
+        :name 'id
+        :emit `(preserve identity)
+        :args [:object]}
+   'trans {:type :function
+           :name 'trans
+           :emit `(preserve (partial apply map vector))
+           :args [:object]}})
 
-(defmethod analyze :default
-  [env expr] (println expr))
+(def named-aliases
+  (->> primitives
+       (map (fn [[name, spec]] [(:alias spec) name]))
+       (filter (comp identity first))
+       (map (fn [[alias, name]] [alias, (get primitives name)]))
+       (into {})))
+
+(def named-primitives
+  (reduce (fn [xs [name spec]]
+            (assoc xs name spec))
+          {}
+          primitives))
+
+(def named-ops (merge named-primitives named-aliases))
+
+(defmulti parse (fn [_ expr] (class expr)))
+
+(defmethod parse clojure.lang.PersistentList
+  [env [op & rest :as expr]]
+  [(assoc (named-ops op) :env env) (mapcat (partial parse (conj env expr)) rest)])
+
+(defmethod parse clojure.lang.Symbol
+  [env sym]
+  [(assoc (named-ops sym) :env env)])
+
+(defmethod parse :default
+  [env expr]
+  [{:env env, :type :object, :value expr}])
 
 (comment
   (use 'clojure.pprint)
