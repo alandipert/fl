@@ -1,7 +1,6 @@
 (ns fl.core
   (:use [clojure.string :only (join)]
-        [clojure.walk :only (postwalk-replace)])
-  (:refer-clojure :exclude (compile)))
+        [clojure.walk :only (postwalk-replace)]))
 
 (defn preserve [f]
   (letfn [(bottom? [x] (boolean (or (nil? x)
