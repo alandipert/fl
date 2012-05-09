@@ -344,7 +344,7 @@
    ((-> odd? inc dec) 1) ;=> 2
    ((-> integer? id) 1) ;=> 1
    ((-> integer?) 1) ;=> 1
-   ((a (-> even? ~:pos ~:neg)) (range 5)) ;=> (:pos :neg :pos :neg :pos)
+   ((a (-> even? ~:even ~:odd)) (range 5)) ;=> (:even :odd :even :odd :even)
    )
 
   (fl-source #'length)
