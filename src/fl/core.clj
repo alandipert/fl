@@ -1,8 +1,9 @@
 (ns fl.core
   (:use [clojure.string :only (join)]
-        [clojure.walk :only (postwalk)]))
+        [clojure.walk :only (postwalk)]
+        [clojure.pprint :only (pprint)]))
 
-(def preserve-bottom
+(def preserve
   `(fn [f#]
      (fn
        ([arg#] (when-not (nil? arg#) (f# arg#)))
@@ -14,40 +15,60 @@
 
    'clojure.core/unquote 'constant
    'constant {:type :form
-              :emit `(~preserve-bottom constantly)}
+              ;; don't make selector functions out of object arguments
+              :form-behavior {:takes-selectors? false}
+              :emit `(~preserve constantly)}
 
    '. 'compose
    'compose {:type :form
+             :form-behavior {:takes-selectors? true}
              :nary true
              :emit `(fn [& args#]
                       (reduce comp args#))}
 
    '$ 'construct
    'construct {:type :form
+               :form-behavior {:takes-selectors? true}
                :nary true,
                :emit `(fn [& args#]
                         (apply juxt args#))}
 
    '/ 'insert
    'insert {:type :form
-            :emit `(~preserve-bottom
+             :form-behavior {:takes-selectors? true}
+            :emit `(~preserve
                     (fn [f#]
                       #(reduce (fn [xs# y#]
                                  (f# [xs# y#])) %)))}
 
    'a 'apply-to-all
    'apply-to-all {:type :form
+                  :form-behavior {:takes-selectors? true}
                   :emit `(fn [f#]
-                           (~preserve-bottom (partial map f#)))}
+                           (~preserve
+                            #(filter (complement nil?) (map f# %))))}
 
    '-> 'condition
    'condition {:type :form
+               :form-behavior {:takes-selectors? true}
                :nary #{3}
-               :emit `(~preserve-bottom
-                       (fn [p# f# g#]
-                         (fn [x#] (if (p# x#) (f# x#) (g# x#)))))}
+               :emit `(fn
+                        ;; (-> p f g):x => (if p:x f:x g:x)
+                        ([p# f# g#]
+                           (~preserve
+                            (fn ([x#] (if (p# x#) (f# x#) (g# x#))) ([]))))
+                        ;; (-> p f):x => (if p:x f:x)
+                        ([p# f#]
+                           (~preserve
+                            (fn ([x#] (if (p# x#) (f# x#))) ([]))))
+                        ;; (-> p):x => (if p:x x)
+                        ([p#]
+                           (~preserve
+                            (fn ([x#] (if (p# x#) x#)) ([]))))
+                        ([]))}
 
    'while {:type :form
+           :form-behavior {:takes-selectors? true}
            :nary #{2}
            :emit `(fn [p# f#]
                     (fn [x#]
@@ -55,17 +76,21 @@
                             (f# x#)))))}
 
    '+ {:type :function
-       :emit `(~preserve-bottom (partial apply +))}
+       :emit `(~preserve (partial apply +))}
    '- {:type :function
-       :emit `(~preserve-bottom (partial apply -))}
+       :emit `(~preserve (partial apply -))}
    '* {:type :function
-       :emit `(~preserve-bottom (partial apply *))}
+       :emit `(~preserve (partial apply *))}
    '% {:type :function
-       :emit `(~preserve-bottom (partial apply /))}
+       :emit `(~preserve (partial apply /))}
    'id {:type :function
-        :emit `(~preserve-bottom identity)}
+        :emit `(~preserve identity)}
    'trans {:type :function
-           :emit `(~preserve-bottom (partial apply map vector))}
+           :emit `(~preserve (partial apply map vector))}
+   'and {:type :function
+         :emit `(~preserve
+                 (fn [arg#]
+                   (boolean (identity (reduce #(and %1 %2) arg#)))))}
    '_ {:type :object
        :value nil}})
 
@@ -96,6 +121,15 @@
   ^{:doc "True if this symbol represents an FL definition available in this namespace."}
   fl-def? (complement clojure-def?))
 
+(defn flpp [flform]
+  (postwalk (fn [f]
+              (if (list? f)
+                (if (= (first f) 'clojure.core/unquote)
+                  (symbol (str "~" (flpp (second f))))
+                  f)
+                f))
+            flform))
+
 ;;; parse
 
 (defmulti parse (fn [_ expr] (class expr)))
@@ -117,7 +151,9 @@
    (assoc (get-prim op),
      :env env,
      :args (map (comp
-                 #(assoc % :parent-type :form)
+                 #(assoc %
+                    :parent-type :form
+                    :parent-form-behavior (:form-behavior (get-prim op)))
                  (partial parse (conj env expr))) more))
 
    ;; primitive function
@@ -133,7 +169,7 @@
    (cond
     ;; defined FL function, form, or value
     (fl-def? op)
-    {:type :inline,
+    {:type ::inline-fl-defined,
      :expr {:type :object,
             :value op,
             :env env}
@@ -142,7 +178,7 @@
 
     ;; defined clojure value
     (clojure-def? op)
-    {:type :clojure-call,
+    {:type ::inline-clojure-call,
      :expr {:type :clojure-function,
             :value op,
             :env env}
@@ -151,7 +187,7 @@
 
    ;; selector functions eg (1 [1 2 3]) -> 2
    (integer? op)
-   {:type :inline-integer-selection
+   {:type ::inline-integer-selection
     :expr {:type :inline-integer-selector,
            :value op,
            :env env}
@@ -160,7 +196,7 @@
 
    ;; inline expression
    (list? op)
-   {:type :inline,
+   {:type ::inline-expression,
     :expr (parse (conj env expr) op)
     :env env,
     :args (map (partial parse (conj env expr)) more)}))
@@ -197,14 +233,6 @@
 (defmethod analyze :default
   [object] object)
 
-(defn flpp [flform]
-  (postwalk (fn [f]
-              (if (list? f)
-                (if (= (first f) 'clojure.core/unquote)
-                  (symbol (str "~" (flpp (second f))))
-                  f)
-                f))
-            flform))
 ;;; emit
 
 (defmulti emit :type)
@@ -232,7 +260,7 @@
 
 (defmethod emit :clojure-function
   [function]
-  `(~preserve-bottom
+  `(~preserve
     (fn
       ([arg#]
          (if (coll? arg#)
@@ -240,33 +268,28 @@
            (~(:value function) arg#)))
       ([]))))
 
-(defmethod emit :clojure-call
-  [call]
-  (list* (emit (:expr call)) (map emit (:args call))))
-
 (defmethod emit :inline-integer-selector
   [selector]
-  `(~preserve-bottom
+  `(~preserve
     (fn [seq#]
       (get (vec seq#) ~(:value selector)))))
 
-(defmethod emit :inline-integer-selection
-  [selection]
-  (list* (emit (:expr selection)) (map emit (:args selection))))
+(derive ::inline-integer-selection ::inline)
+(derive ::inline-expression ::inline)
+(derive ::inline-fl-defined ::inline)
+(derive ::inline-clojure-call ::inline)
 
-(defmethod emit :inline
+(defmethod emit ::inline
   [inline]
-  (list* (if (= :object (:type (:expr inline)))
-           (:value (:expr inline))
-           (emit (:expr inline)))
-         (map emit (:args inline))))
+  (list* (emit (:expr inline)) (map emit (:args inline))))
 
 (defmethod emit :object
   [object]
-  ;; handle integers  inside of forms specially - they are selector functions
-  (if (and (= :form (:parent-type object))
-           (integer? (:value object)))
-    `(~preserve-bottom #(get (vec %) ~(:value object)))
+  ;; handle integers inside of forms specially - they are selector functions
+  (if (and
+       (integer? (:value object))
+       (get-in object [:parent-form-behavior :takes-selectors?]))
+    `(~preserve #(get (vec %) ~(:value object)))
     (:value object)))
 
 (defn emitn [exprs]
@@ -278,7 +301,7 @@
 
 (defn fl-source [name]
   "Look up the fl source for a var: (fl-source #'length)"
-  (flpp (first (:env (first (get-in (meta name) [:fl :args 1 :args]))))))
+  (flpp (get-in (meta name) [:fl :source])))
 
 (defn repl []
   (prn "Type " :q " to quit.")
@@ -305,20 +328,23 @@
 (comment
   (fl
    (def x ~1)
-   (def inner-product (. (/ +) (a *) trans))
-   (def sum-and-prod ($ (/ +) (/ *)))
-   (def incr (. (/ +) ($ id ~1)))
-   (def intsto (. range ($ ~1 id) inc))
+   (def inner-product (. + (a *) trans))
+   (def sum-and-prod ($ + *))
+   (def incr (. + ($ id ~1)))
+   (def intsto (. range ($ ~1 id) incr))
+   (def length (. + (a ~1)))
    (def fact (. * intsto))
 
    ;; selectors
-   (3 [1 2 3 4 5]) ;4
-   (($ 0 1) [10 11 12]) ;[10 11]
+   (3 [1 2 3 4 5]) ;=> 4
+   (($ 0 1) [10 11 12]) ;=> [10 11]
 
-   ;; fl: (def head (. 0))
-   ;; #'fl.core/head
-   ;; fl: (head [1 2 3])
-   ;; 1
+   ;; nil-filtering a, condition form
+   ((a (-> even?)) (range 10)) ;=> (0 2 4 6 8)
+   ((-> odd? inc dec) 1) ;=> 2
+   ((-> integer? id) 1) ;=> 1
+   ((-> integer?) 1) ;=> 1
+   ((a (-> even? ~:pos ~:neg)) (range 5)) ;=> (:pos :neg :pos :neg :pos)
    )
 
   (fl-source #'length)
