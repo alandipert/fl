@@ -1,4 +1,5 @@
 (ns fl.core
+  (:refer-clojure :exclude (compile))
   (:use [clojure.string :only (join)]
         [clojure.walk :only (postwalk)]
         [clojure.pprint :only (pprint)]))
@@ -121,11 +122,11 @@
   ^{:doc "True if this symbol represents an FL definition available in this namespace."}
   fl-def? (complement clojure-def?))
 
-(defn flpp [flform]
+(defn fl-format [flform]
   (postwalk (fn [f]
               (if (list? f)
                 (if (= (first f) 'clojure.core/unquote)
-                  (symbol (str "~" (flpp (second f))))
+                  (symbol (str "~" (fl-format (second f))))
                   f)
                 f))
             flform))
@@ -246,7 +247,7 @@
               (emit (second (:args form))))
        (alter-meta! (var ~(:value (first (:args form))))
                     merge
-                    {:fl {:source '~(flpp (first (:env (second (:args form)))))}})
+                    {:fl {:source '~(fl-format (first (:env (second (:args form)))))}})
        #'~(:value (first (:args form))))
     (if (empty? (:args form))
       (:emit form)
@@ -292,16 +293,15 @@
     `(~preserve #(get (vec %) ~(:value object)))
     (:value object)))
 
-(defn emitn [exprs]
-  (doseq [expr exprs]
-    (eval (emit (analyze (parse [] expr))))))
+(defn compile [expr]
+  (emit (analyze (parse [] expr))))
 
 (defmacro fl [& body]
-  `(do ~@(eval `(emitn '~body))))
+  `(doseq [expr# '~body] (compile expr#)))
 
 (defn fl-source [name]
   "Look up the fl source for a var: (fl-source #'length)"
-  (flpp (get-in (meta name) [:fl :source])))
+  (fl-format (get-in (meta name) [:fl :source])))
 
 (defn repl []
   (prn "Type " :q " to quit.")
@@ -312,20 +312,13 @@
       (if (= form :q)
         :quit
         (do (try
-              (->> `(identity '~form)
-                   eval
-                   (parse [])
-                   analyze
-                   emit
-                   eval
-                   flpp
-                   println)
-              (catch Exception e
-                (println e))
+              (->> `'~form eval compile eval println)
+              (catch Exception e (println e))
               (finally (flush)))
             (recur))))))
 
 (comment
+  (fl (def x ~1) (def y 123))
   (fl
    (def x ~1)
    (def inner-product (. + (a *) trans))
