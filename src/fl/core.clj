@@ -25,14 +25,18 @@
              :form-behavior {:takes-selectors? true}
              :nary true
              :emit `(fn [& args#]
-                      (reduce comp args#))}
+                      (if-not (empty? args#)
+                        (if-not (some nil? args#)
+                          (reduce comp args#))))}
 
    '$ 'construct
    'construct {:type :form
                :form-behavior {:takes-selectors? true}
                :nary true,
                :emit `(fn [& args#]
-                        (apply juxt args#))}
+                        (if-not (empty? args#)
+                          (if-not (some nil? args#)
+                            (apply juxt args#))))}
 
    '/ 'insert
    'insert {:type :form
@@ -341,7 +345,7 @@
    ((a (-> even? ~:even ~:odd)) (range 5)) ;=> (:even :odd :even :odd :even)
 
    (def pair? (. = ($ ~2 length)))
-   ((a (-> pair? 1)) [[1 2] [3] [4 5]]) ;=> (2 5)
+   ((a (-> pair? 1 0)) [[1 2] [3] [4 5]]) ;=> (2 3 5)
    ((a (-> pair? 1)) [1 2 [3 4]]) ;=> (5)
    )
 
