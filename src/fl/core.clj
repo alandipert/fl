@@ -278,7 +278,9 @@
   [selector]
   `(~preserve
     (fn [seq#]
-      (get (vec seq#) ~(:value selector)))))
+      (if (coll? seq#)
+        (if-not (empty? seq#)
+          (get (vec seq#) ~(:value selector)))))))
 
 (derive ::inline-integer-selection ::inline)
 (derive ::inline-expression ::inline)
@@ -345,8 +347,8 @@
    ((a (-> even? ~:even ~:odd)) (range 5)) ;=> (:even :odd :even :odd :even)
 
    (def pair? (. = ($ ~2 length)))
-   ((a (-> pair? 1 0)) [[1 2] [3] [4 5]]) ;=> (2 3 5)
-   ((a (-> pair? 1)) [1 2 [3 4]]) ;=> (5)
+   ((a (-> pair? 1 0)) [[1 2] [3] 10 [4 5]]) ;=> (2 3 5)
+   ((a (-> pair? 1)) [1 2 [3 4]]) ;=> (4)
    )
 
   (fl-source #'length)
