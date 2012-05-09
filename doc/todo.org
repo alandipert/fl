@@ -1,0 +1,10 @@
+* associative data
+** keywords as selector functions?
+*** see b78 p621
+* bottom preservation
+* static analysis
+** FFP and AST
+* extent of clojure integration
+* syntax front(s)
+** compile to clj data
+** purchase APL keyboard
