@@ -2,13 +2,10 @@
   (:use [clojure.string :only (join)]
         [clojure.walk :only (postwalk)]))
 
-(defn preserve [f]
-  (letfn [(bottom? [x] (boolean (or (nil? x)
-                                    (when (coll? x)
-                                      (some nil? x)))))]
-    (fn
-      ([arg] (when-not (bottom? arg) (f arg)))
-      ([]))))
+(def preserve-bottom [f]
+  `(fn
+     ([arg] (when-not (nil? arg) (f arg)))
+     ([])))
 
 (def primitives
   {'def {:type :form
@@ -22,51 +19,52 @@
    'compose {:type :form
              :nary true
              :emit `(fn [& args#]
-                      (reduce comp (map preserve args#)))}
+                      (reduce comp (map ~preserve-bottom args#)))}
 
    '$ 'construct
    'construct {:type :form
                :nary true,
                :emit `(fn [& args#]
-                        (reduce juxt (map preserve args#)))}
+                        (apply juxt (map ~preserve-bottom args#)))}
 
    '/ 'insert
    'insert {:type :form
-            :emit `(preserve (fn [f#]
-                               #(reduce (fn [xs# y#]
-                                          (f# [xs# y#])) %)))}
+            :emit `(~preserve-bottom
+                    (fn [f#]
+                      #(reduce (fn [xs# y#]
+                                 (f# [xs# y#])) %)))}
 
    'a 'apply-to-all
    'apply-to-all {:type :form
                   :emit `(fn [f#]
-                           (preserve (partial map f#)))}
+                           (~preserve-bottom (partial map f#)))}
 
    '-> 'condition
    'condition {:type :form
                :nary #{3}
-               :emit `(fn [p# f# g#]
-                        (fn [x#] (preserve (if (p# x#) (f# x#) (g# x#)))))}
+               :emit `(~preserve-bottom
+                       (fn [p# f# g#]
+                         (fn [x#] (if (p# x#) (f# x#) (g# x#)))))}
 
    'while {:type :form
            :nary #{2}
            :emit `(fn [p# f#]
                     (fn [x#]
                       (do (while (p# x#)
-                            (f# x#))
-                          (preserve x#))))}
+                            (f# x#)))))}
 
    '+ {:type :function
-       :emit `(preserve (partial apply +))}
+       :emit `(~preserve-bottom (partial apply +))}
    '- {:type :function
-       :emit `(preserve (partial apply -))}
+       :emit `(~preserve-bottom (partial apply -))}
    '* {:type :function
-       :emit `(preserve (partial apply *))}
+       :emit `(~preserve-bottom (partial apply *))}
    '% {:type :function
-       :emit `(preserve (partial apply /))}
+       :emit `(~preserve-bottom (partial apply /))}
    'id {:type :function
-        :emit `(preserve identity)}
+        :emit `(~preserve-bottom identity)}
    'trans {:type :function
-           :emit `(preserve (partial apply map vector))}
+           :emit `(~preserve-bottom (partial apply map vector))}
    '_ {:type :object
        :value nil}})
 
@@ -108,9 +106,9 @@
    ;; definition
    (= op 'def)
    (assoc (get-prim 'def)
-      :env env,
-      :args [{:type :object, :value (first more)},
-             (parse (conj env expr) (first (rest more)))])
+     :env env,
+     :args [{:type :object, :value (first more)},
+            (parse (conj env expr) (first (rest more)))])
 
    ;; primitive form or function
    (get-prim op)
@@ -213,12 +211,13 @@
 
 (defmethod emit :clojure-function
   [function]
-  `(preserve (fn
-               ([arg#]
-                  (if (coll? arg#)
-                    (apply ~(:value function) arg#)
-                    (~(:value function) arg#)))
-               ([]))))
+  `(~preserve-bottom
+    (fn
+      ([arg#]
+         (if (coll? arg#)
+           (apply ~(:value function) arg#)
+           (~(:value function) arg#)))
+      ([]))))
 
 (defmethod emit :clojure-call
   [call]
@@ -254,7 +253,14 @@
       (if (= form :q)
         :quit
         (do (try
-              (println (flpp (eval (emit (analyze (parse [] (eval `(identity '~form))))))))
+              (->> `(identity '~form)
+                   eval
+                   (parse [])
+                   analyze
+                   emit
+                   eval
+                   flpp
+                   println)
               (catch Exception e
                 (println e))
               (finally (flush)))
@@ -268,6 +274,8 @@
    (def incr (. (/ +) ($ id ~1)))
    (def intsto (. range ($ ~1 id) inc))
    (def fact (. * intsto))
+
+   (. * )
    )
 
   (fl-source #'length)
