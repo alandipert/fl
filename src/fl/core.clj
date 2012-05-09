@@ -36,7 +36,7 @@
 
    '/ 'insert
    'insert {:type :form
-             :form-behavior {:takes-selectors? true}
+            :form-behavior {:takes-selectors? true}
             :emit `(~preserve
                     (fn [f#]
                       #(reduce (fn [xs# y#]
