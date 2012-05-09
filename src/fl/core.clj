@@ -2,10 +2,11 @@
   (:use [clojure.string :only (join)]
         [clojure.walk :only (postwalk)]))
 
-(def preserve-bottom [f]
-  `(fn
-     ([arg] (when-not (nil? arg) (f arg)))
-     ([])))
+(def preserve-bottom
+  `(fn [f#]
+     (fn
+       ([arg#] (when-not (nil? arg#) (f# arg#)))
+       ([]))))
 
 (def primitives
   {'def {:type :form
@@ -13,19 +14,19 @@
 
    'clojure.core/unquote 'constant
    'constant {:type :form
-              :emit `(preserve constantly)}
+              :emit `(~preserve-bottom constantly)}
 
    '. 'compose
    'compose {:type :form
              :nary true
              :emit `(fn [& args#]
-                      (reduce comp (map ~preserve-bottom args#)))}
+                      (reduce comp args#))}
 
    '$ 'construct
    'construct {:type :form
                :nary true,
                :emit `(fn [& args#]
-                        (apply juxt (map ~preserve-bottom args#)))}
+                        (apply juxt args#))}
 
    '/ 'insert
    'insert {:type :form
@@ -110,11 +111,22 @@
      :args [{:type :object, :value (first more)},
             (parse (conj env expr) (first (rest more)))])
 
-   ;; primitive form or function
-   (get-prim op)
+   ;; primitive form
+   ;; numeric arguments are interpreted as selectors
+   (= :form (:type (get-prim op)))
    (assoc (get-prim op),
      :env env,
-     :args (map (partial parse (conj env expr)) more))
+     :args (map (comp
+                 #(assoc % :parent-type :form)
+                 (partial parse (conj env expr))) more))
+
+   ;; primitive function
+   (= :function (:type (get-prim op)))
+   (assoc (get-prim op),
+     :env env,
+     :args (map (comp
+                 #(assoc % :parent-type :function)
+                 (partial parse (conj env expr))) more))
 
    ;; invocation
    (symbol? op)
@@ -137,10 +149,19 @@
      :env env
      :args (map (partial parse (conj env expr)) more)})
 
+   ;; selector functions eg (1 [1 2 3]) -> 2
+   (integer? op)
+   {:type :inline-integer-selection
+    :expr {:type :inline-integer-selector,
+           :value op,
+           :env env}
+    :env env
+    :args (map (partial parse (conj env expr)) more)}
+
    ;; inline expression
    (list? op)
    {:type :inline,
-    :expr (map (partial parse (conj env expr)) op)
+    :expr (parse (conj env expr) op)
     :env env,
     :args (map (partial parse (conj env expr)) more)}))
 
@@ -223,15 +244,30 @@
   [call]
   (list* (emit (:expr call)) (map emit (:args call))))
 
+(defmethod emit :inline-integer-selector
+  [selector]
+  `(~preserve-bottom
+    (fn [seq#]
+      (get (vec seq#) ~(:value selector)))))
+
+(defmethod emit :inline-integer-selection
+  [selection]
+  (list* (emit (:expr selection)) (map emit (:args selection))))
+
 (defmethod emit :inline
   [inline]
-  (if (= :object (:type (:expr inline)))
-    (list* (:value (:expr inline)) (map emit (:args inline)))
-    (list* (map emit (:expr inline)) (map emit (:args inline)))))
+  (list* (if (= :object (:type (:expr inline)))
+           (:value (:expr inline))
+           (emit (:expr inline)))
+         (map emit (:args inline))))
 
 (defmethod emit :object
   [object]
-  (:value object))
+  ;; handle integers  inside of forms specially - they are selector functions
+  (if (and (= :form (:parent-type object))
+           (integer? (:value object)))
+    `(~preserve-bottom #(get (vec %) ~(:value object)))
+    (:value object)))
 
 (defn emitn [exprs]
   (doseq [expr exprs]
@@ -275,7 +311,14 @@
    (def intsto (. range ($ ~1 id) inc))
    (def fact (. * intsto))
 
-   (. * )
+   ;; selectors
+   (3 [1 2 3 4 5]) ;4
+   (($ 0 1) [10 11 12]) ;[10 11]
+
+   ;; fl: (def head (. 0))
+   ;; #'fl.core/head
+   ;; fl: (head [1 2 3])
+   ;; 1
    )
 
   (fl-source #'length)
