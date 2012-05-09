@@ -47,7 +47,8 @@
                   :form-behavior {:takes-selectors? true}
                   :emit `(fn [f#]
                            (~preserve
-                            #(filter (complement nil?) (map f# %))))}
+                            #(if (coll? %)
+                               (filter (complement nil?) (map f# %)))))}
 
    '-> 'condition
    'condition {:type :form
@@ -318,7 +319,7 @@
             (recur))))))
 
 (comment
-  (fl (def x ~1) (def y 1234))
+  (fl (def x ~1) (def y 123))
   (fl
    (def x ~1)
    (def inner-product (. + (a *) trans))
@@ -338,6 +339,10 @@
    ((-> integer? id) 1) ;=> 1
    ((-> integer?) 1) ;=> 1
    ((a (-> even? ~:even ~:odd)) (range 5)) ;=> (:even :odd :even :odd :even)
+
+   (def pair? (. = ($ ~2 length)))
+   ((a (-> pair? 1)) [[1 2] [3] [4 5]]) ;=> (2 5)
+   ((a (-> pair? 1)) [1 2 [3 4]]) ;=> (5)
    )
 
   (fl-source #'length)
