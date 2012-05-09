@@ -297,7 +297,7 @@
   (emit (analyze (parse [] expr))))
 
 (defmacro fl [& body]
-  `(doseq [expr# '~body] (compile expr#)))
+  `(doseq [expr# '~body] (eval (compile expr#))))
 
 (defn fl-source [name]
   "Look up the fl source for a var: (fl-source #'length)"
@@ -318,7 +318,7 @@
             (recur))))))
 
 (comment
-  (fl (def x ~1) (def y 123))
+  (fl (def x ~1) (def y 1234))
   (fl
    (def x ~1)
    (def inner-product (. + (a *) trans))
