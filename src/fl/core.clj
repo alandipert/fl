@@ -6,18 +6,27 @@
 
 (def ^:dynamic *debug* true)
 
-(def preserve
-  `(fn [f#]
+(defn preserve-fn
+  ([f#]
      (fn
-       ([arg#] (if (coll? arg#)
-                 (if-not (some nil? arg#) (f# arg#))
-                 (if-not (nil? arg#) (f# arg#))))
+       ([arg#]
+          (if (coll? arg#)
+            (if-not (some nil? arg#) (f# arg#))
+            (if-not (nil? arg#) (f# arg#))))
        ([]))))
+
+(def preserve 'preserve-fn)
+;; (def preserve
+;;   `(fn [f#]
+;;      (fn
+;;        ([arg#] (if (coll? arg#)
+;;                  (if-not (some nil? arg#) (f# arg#))
+;;                  (if-not (nil? arg#) (f# arg#))))
+;;        ([]))))
 
 (defn numeric-function [op]
   `(~preserve
     #(do
-       (println "arg to " '~op ": " %)
        (if (coll? %)
          (apply ~op %)
          (~op %)))))
@@ -43,81 +52,85 @@
                           (reduce comp args#))))}
 
    '» 'construct
-   '$ 'construct
-   'construct {:type :form
-               :form-behavior {:takes-selectors? true}
-               :nary true,
-               :emit `(fn [& args#]
-                        (if-not (empty? args#)
-                          (if-not (some nil? args#)
-                            (apply juxt args#))))}
-
-   '/ 'insert
-   'insert {:type :form
-            :form-behavior {:takes-selectors? true}
-            :emit `(~preserve
-                    (fn [f#]
-                      #(reduce (fn [xs# y#]
-                                 (f# [xs# y#])) %)))}
-
-   'α 'apply-to-all
-   'a 'apply-to-all
-   'apply-to-all {:type :form
+      '$ 'construct
+      'construct {:type :form
                   :form-behavior {:takes-selectors? true}
-                  :emit `(fn [f#]
-                           (~preserve
-                            #(if (coll? %)
-                               (filter (complement nil?) (map f# %)))))}
+                  :nary true,
+                  :emit `(fn [& args#]
+                           (if-not (empty? args#)
+                             (if-not (some nil? args#)
+                               (apply juxt args#))))}
 
-   '→ 'condition
-   '-> 'condition
-   'condition {:type :form
+      '/ 'insert
+      'insert {:type :form
                :form-behavior {:takes-selectors? true}
-               :nary #{3}
-               :emit `(fn
-                        ;; (-> p f g):x => (if p:x f:x g:x)
-                        ([p# f# g#]
-                           (~preserve
-                            (fn ([x#] (if (p# x#) (f# x#) (g# x#))) ([]))))
-                        ;; (-> p f):x => (if p:x f:x)
-                        ([p# f#]
-                           (~preserve
-                            (fn ([x#] (if (p# x#) (f# x#))) ([]))))
-                        ;; (-> p):x => (if p:x x)
-                        ([p#]
-                           (~preserve
-                            (fn ([x#] (if (p# x#) x#)) ([]))))
-                        ([]))}
+               :emit `(~preserve
+                       (fn [f#]
+                         #(reduce (fn [xs# y#]
+                                    (f# [xs# y#])) %)))}
 
-   'while {:type :form
-           :form-behavior {:takes-selectors? true}
-           :nary #{2}
-           :emit `(fn [p# f#]
-                    (fn [x#]
-                      (do (while (p# x#)
-                            (f# x#)))))}
+      'α 'apply-to-all
+      'a 'apply-to-all
+      'apply-to-all {:type :form
+                     :form-behavior {:takes-selectors? true}
+                     :emit `(fn [f#]
+                              (~preserve
+                               #(if (coll? %)
+                                  (filter (complement nil?) (map f# (seq %))))))}
 
-   '+ {:type :function
-       :emit (numeric-function '+)}
-   '- {:type :function
-       :emit (numeric-function '-)}
-   '* {:type :function
-       :emit (numeric-function '*)}
-   '% {:type :function
-       :emit (numeric-function '%)}
-   'id {:type :function
-        :emit `(~preserve identity)}
-   'trans {:type :function
-           :emit `(~preserve (partial apply map vector))}
-   'and {:type :function
-         :emit `(~preserve
-                 (fn [arg#]
-                   (when (coll? arg)
-                     (when-not (empty? arg)
-                       (boolean (identity (reduce #(and %1 %2) arg#)))))))}
-   '⊥ '_
-   '_ {:type :object
-       :value nil}})
+      '→ 'condition
+         '-> 'condition
+         'condition {:type :form
+                     :form-behavior {:takes-selectors? true}
+                     :nary #{3}
+                     :emit `(fn
+                              ;; (-> p f g):x => (if p:x f:x g:x)
+                              ([p# f# g#]
+                                 (~preserve
+                                  (fn ([x#] (if (p# x#) (f# x#) (g# x#))) ([]))))
+                              ;; (-> p f):x => (if p:x f:x)
+                              ([p# f#]
+                                 (~preserve
+                                  (fn ([x#] (if (p# x#) (f# x#))) ([]))))
+                              ([]))}
+
+         'while {:type :form
+                 :form-behavior {:takes-selectors? true}
+                 :nary #{2}
+                 :emit `(fn [p# f#]
+                          (fn [x#]
+                            (do (while (p# x#)
+                                  (f# x#)))))}
+
+         '+ {:type :function
+             :emit (numeric-function '+)}
+         '- {:type :function
+             :emit (numeric-function '-)}
+         '* {:type :function
+             :emit (numeric-function '*)}
+         '% {:type :function
+             :emit (numeric-function '%)}
+         'eq '=
+         '= {:type :function
+             :emit (numeric-function '=)}
+
+         'id {:type :function
+              :emit `(~preserve identity)}
+         'pid {:type :function
+               :emit `(~preserve #(do
+                                    (println %)
+                                    (identity %)))}
+         'trans {:type :function
+                 :emit `(~preserve (partial apply map vector))}
+         'and {:type :function
+               :emit `(~preserve
+                       (fn [arg#]
+                         (when (coll? arg)
+                           (when-not (empty? arg)
+                             (boolean (identity (reduce #(and %1 %2) arg#)))))))}
+         '⊥ '_
+            '_ {:type :object
+                :value nil}})
 
 (def named-primitives
   (reduce (fn [xs [name spec]]
@@ -313,11 +326,19 @@
 (defmethod emit :object
   [object]
   ;; handle integers inside of forms specially - they are selector functions
-  (if (and
-       (integer? (:value object))
-       (get-in object [:parent-form-behavior :takes-selectors?]))
-    `(~preserve #(get (vec %) ~(:value object)))
-    (:value object)))
+
+  (cond
+
+   (and (integer? (:value object))
+        (get-in object [:parent-form-behavior :takes-selectors?]))
+   `(~preserve #(get (vec %) ~(:value object)))
+
+   ;; resolve so the function can recurse, but means we can't work with symbol values
+   (symbol? (:value object))
+   (ns-resolve *ns* (:value object))
+
+   :else
+   (:value object)))
 
 (defn compile [expr]
   (emit (analyze (parse [] expr))))
@@ -366,17 +387,26 @@
 
    (def pair? (. = ($ ~2 length)))
 
-   ((a (-> pair? 1 0)) [[1 2] [3] 10 [4 5]]) ;=> (2 3 5)
+   ((a (-> pair? 1 0)) [[1 2] [3] [4 5]]) ;=> (2 3 5)
    ((a (-> pair? 1)) [1 2 [3 4]]) ;=> (4)
 
-   ;; recursive fact - will blow stack
-   (def sub1 (. - ($ id ~1)))
-   (def eq0 (. = ($ id ~0)))
-   (def ! (-> eq0 ~1 (. * ($ id (. ! sub1)))))
-   (! 6) ;=> 720
+   ((a (-> pair?)) [1 2 3])
 
-   ;; closed-form fact
-   (def incr (. + ($ id ~1)))
-   (def intsto (. range ($ ~1 id) incr))
-   (def fact (. * intsto))
-))
+   ;; recursive stack blowers
+
+   ;; countdown - prints via pid, an id that prints its argument
+   (def not0 (. not= ($ id ~0)))
+   (def decr (. - ($ id ~1)))
+   (def countdown (-> not0 (. countdown decr pid) ~"Boom!"))
+   ;; fl: (countdown 3)
+   ;; 3
+   ;; 2
+   ;; 1
+   ;; Boom!
+
+   ;; recursive factorial
+   (def subl (. - ($ id ~1)))
+   (def eq0 (. eq ($ id ~0)))
+   (def ! (-> eq0 ~1 (. * ($ id (. ! subl)))))
+   ;; (! 5) ;=> 120
+   ))
