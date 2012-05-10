@@ -4,11 +4,23 @@
         [clojure.walk :only (postwalk)]
         [clojure.pprint :only (pprint)]))
 
+(def ^:dynamic *debug* true)
+
 (def preserve
   `(fn [f#]
      (fn
-       ([arg#] (when-not (nil? arg#) (f# arg#)))
+       ([arg#] (if (coll? arg#)
+                 (if-not (some nil? arg#) (f# arg#))
+                 (if-not (nil? arg#) (f# arg#))))
        ([]))))
+
+(defn numeric-function [op]
+  `(~preserve
+    #(do
+       (println "arg to " '~op ": " %)
+       (if (coll? %)
+         (apply ~op %)
+         (~op %)))))
 
 (def primitives
   {'def {:type :form
@@ -20,6 +32,7 @@
               :form-behavior {:takes-selectors? false}
               :emit `(~preserve constantly)}
 
+   '⚪ 'compose
    '. 'compose
    'compose {:type :form
              :form-behavior {:takes-selectors? true}
@@ -29,6 +42,7 @@
                         (if-not (some nil? args#)
                           (reduce comp args#))))}
 
+   '» 'construct
    '$ 'construct
    'construct {:type :form
                :form-behavior {:takes-selectors? true}
@@ -46,6 +60,7 @@
                       #(reduce (fn [xs# y#]
                                  (f# [xs# y#])) %)))}
 
+   'α 'apply-to-all
    'a 'apply-to-all
    'apply-to-all {:type :form
                   :form-behavior {:takes-selectors? true}
@@ -54,6 +69,7 @@
                             #(if (coll? %)
                                (filter (complement nil?) (map f# %)))))}
 
+   '→ 'condition
    '-> 'condition
    'condition {:type :form
                :form-behavior {:takes-selectors? true}
@@ -82,13 +98,13 @@
                             (f# x#)))))}
 
    '+ {:type :function
-       :emit `(~preserve (partial apply +))}
+       :emit (numeric-function '+)}
    '- {:type :function
-       :emit `(~preserve (partial apply -))}
+       :emit (numeric-function '-)}
    '* {:type :function
-       :emit `(~preserve (partial apply *))}
+       :emit (numeric-function '*)}
    '% {:type :function
-       :emit `(~preserve (partial apply /))}
+       :emit (numeric-function '%)}
    'id {:type :function
         :emit `(~preserve identity)}
    'trans {:type :function
@@ -96,7 +112,10 @@
    'and {:type :function
          :emit `(~preserve
                  (fn [arg#]
-                   (boolean (identity (reduce #(and %1 %2) arg#)))))}
+                   (when (coll? arg)
+                     (when-not (empty? arg)
+                       (boolean (identity (reduce #(and %1 %2) arg#)))))))}
+   '⊥ '_
    '_ {:type :object
        :value nil}})
 
@@ -315,14 +334,13 @@
   (loop []
     (print "fl: ")
     (flush)
-    (let [form (read)]
-      (if (= form :q)
-        :quit
-        (do (try
-              (->> `'~form eval compile eval println)
-              (catch Exception e (println e))
-              (finally (flush)))
-            (recur))))))
+    (when-let [form (read)]
+      (when (not= form :q)
+        (try
+          (->> `'~form eval compile eval println)
+          (catch Exception e (.printStackTrace e))
+          (finally (flush)))
+        (recur)))))
 
 (comment
   (fl (def x ~1) (def y 123))
@@ -347,9 +365,18 @@
    ((a (-> even? ~:even ~:odd)) (range 5)) ;=> (:even :odd :even :odd :even)
 
    (def pair? (. = ($ ~2 length)))
+
    ((a (-> pair? 1 0)) [[1 2] [3] 10 [4 5]]) ;=> (2 3 5)
    ((a (-> pair? 1)) [1 2 [3 4]]) ;=> (4)
-   )
 
-  (fl-source #'length)
-  )
+   ;; recursive fact - will blow stack
+   (def sub1 (. - ($ id ~1)))
+   (def eq0 (. = ($ id ~0)))
+   (def ! (-> eq0 ~1 (. * ($ id (. ! sub1)))))
+   (! 6) ;=> 720
+
+   ;; closed-form fact
+   (def incr (. + ($ id ~1)))
+   (def intsto (. range ($ ~1 id) incr))
+   (def fact (. * intsto))
+))
