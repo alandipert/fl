@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+set -e
+
+SOURCE_DIR="src/java"
+COMPILE_DIR="classes/java"
+
+function antlr {
+    case "$1" in
+        generate)
+            find $SOURCE_DIR -name \*.g -exec java org.antlr.Tool {} \+
+            ;;
+        compile)
+            find $SOURCE_DIR -name \*.java -exec javac -d $COMPILE_DIR {} \+
+            ;;
+        clean)
+            rm -rf $COMPILE_DIR/*
+            ;;
+        *)
+            print-usage
+            ;;
+    esac
+}
+
+function print-usage {
+    echo "Usage: $0 (generate|compile|clean)+"
+    exit 1
+}
+
+if [[ -z "$1" ]]; then
+    print-usage
+fi
+
+export CLASSPATH=`find lib -name \*.jar -exec echo -n {}: \;`
+
+for cmd in "$@"; do
+    antlr "$cmd"
+done
