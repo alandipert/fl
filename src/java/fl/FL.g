@@ -37,7 +37,7 @@ atom:   '\'' CHARACTER
     |   NUMBER
     |   'T'
     |   'F'
-    |   '|-' // bottom
+    |   '_' // bottom
     ;
 
 seq :   '<' exprList '>'
