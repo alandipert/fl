@@ -52,7 +52,7 @@ cond:   expr '->' PRIME expr (';' expr)?
     |   pat '->' expr (';' expr)?
     ;
 
-patlist
+patList
     :   (patExpr ',')* pat (',' patExpr)*
     ;
 
@@ -103,6 +103,10 @@ CHARACTER
 
 LETTER
     :   ('A'..'Z'|'a'..'z')
+    ;
+
+NUMBER
+    :   ('+'|'-')? ('0'..'9')+ ('.' ('0'..'9')+)?
     ;
 
 ID_CHAR
