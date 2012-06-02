@@ -15,18 +15,25 @@ package fl;
 prog:   (expr NEWLINE)+
     ;
 
-expr:   atom
+exprItem
+    :   atom
     |   name
     |   seq
-    |   expr ':' PRIME expr
     |   '(' expr ')'
-    |   expr PRIME
     |   cond
     |   '~' PRIME expr
     |   '[' PRIME exprList ']'
     |   '[|' PRIME exprList '|]'
-    |   expr expr expr
-    |   expr 'where' expr
+    ;
+
+exprTail
+    :   ':' PRIME expr
+    |   'where' expr
+    ;
+
+// Infix expr is defined as: expr expr expr. I don't think that's right...
+// Leaving it out for now.
+expr:   exprItem PRIME exprTail?
     ;
 
 exprList
@@ -65,14 +72,15 @@ patExpr
     |   expr
     ;
 
-env :   '{' defn+ '}'
+env :   envItem (('uses'|'where'|'union') env)?
+    ;
+
+envItem
+    :   '{' defn+ '}'
     |   'export(' nameList ')' env
     |   'hide(' nameList ')' env
     |   'lib(' string ')'
     |   'PF'
-    |   env 'uses' env
-    |   env 'where' env
-    |   env 'union' env
     |   '{' env '}'
     ;
 
@@ -90,7 +98,7 @@ name:   identifier
     ;
 
 identifier
-    :   LETTER (ID_CHAR)*
+    :   LETTER ID_CHAR*
     ;
 
 PRIME
@@ -98,7 +106,7 @@ PRIME
     ;
 
 CHARACTER
-    : .
+    :   .
     ;
 
 LETTER
